@@ -1,0 +1,119 @@
+<style>
+pre, tt {
+  color: darkgreen;
+}
+</style>
+
+<title>Multiword monotonic time counters</title>
+
+<i>2023-May-11</i>
+
+<h1>Multiword monotonic time counters</h1>
+
+<p>Suppose we have a multiprocessor system on which the widest possible atomic memory access is one word, and we wish to maintain a monotonic counter wider than one word, which all processors can read in a wait-free manner.
+
+<p>If the counter is maintained by hardware, e.g. a memory-mapped register, then a common trick is
+
+<pre>
+#define W (8 * sizeof(unsigned))
+
+extern volatile unsigned counter[2];
+
+long read_counter() {
+  do {
+    unsigned hi = counter[1];
+    unsigned lo = counter[0];
+    unsigned hi2 = counter[1];
+  } while (hi != hi2);
+  return ((long) hi) << W | lo;
+}
+</pre>
+
+<p>If the loads cannot be reordered, then <tt>hi2 == hi</tt> means the low word did not wrap between those loads.  (This assumes it is unrealistic for the high word to have traveled through its entire range.)
+
+<p>However, if the counter is in RAM updated by software, this is insufficient.  There's no ordering of the writes which prevents momentarily observing a torn counter.  Classic solutions are
+<ul>
+  <li>[Lamport 1990] maintain two duplicate counters and update their words in opposite orders
+  <li>[MTY 1996] represent the count in Gray code, so each increment requires updating only a single word
+</ul>
+
+<p>The problem also arises if the counter is partly maintained in hardware (necessarily the case for a high-resolution time counter) and partly by software.  In this case, we cannot use the above techniques, because typical hardware does not implement them.
+
+<h2>Extending a hardware counter</h2>
+
+<p>Suppose <tt>counter[0]</tt> is a hardware register which generates an interrupt when it overflows, and we wish to extend it into the bits of <tt>counter[1]</tt> by tracking those overflows.  After an interrupt is generated, the hardware counter has already wrapped, but the high word will take a few cycles to update.  Readers need additional information to correctly combine the high and low words.
+
+<p>One possibility is to also read the pending interrupt flag from the hardware.  The ISR can increment <tt>counter[1]</tt> by one, clear the interrupt flag, then increment <tt>counter[1]</tt> again.  Readers know that an overflow has occurred either when the interrupt flag is set, or when <tt>counter[1]</tt> is odd.  This depends on two assumptions:
+
+<ul>
+  <li>it's not possible to observe the post-overflow value of <tt>counter[0]</tt> before the interrupt line is asserted
+  <li>the interrupt will be serviced before another overflow
+</ul>
+
+<pre>
+void handle_counter_interrupt() {
+  counter[0]++;
+  pending_interrupt[COUNTER] = false;
+  counter[0]++;
+}
+
+unsigned read_counter_hi() {
+  unsigned hi = counter[1];
+  bool pi = pending_interrupt[COUNTER];
+  if (pi || (hi & 1)) {
+    return (hi >> 1) + 1;
+  } else {
+    return hi >> 1;
+  }
+}
+
+long read_counter() {
+  do {
+    unsigned hi = read_counter_hi();
+    unsigned lo = counter[0];
+    unsigned hi2 = read_counter_hi();
+  } while (hi != hi2);
+  return ((long) hi) << W | lo;
+}
+</pre>
+
+<p>Another approach is to require some other source of wakeups which arrive more frequently than <tt>counter[0]</tt> overflows, and periodically duplicate the MSB of <tt>counter[0]</tt> into the LSB <tt>counter[1]</tt>.  This works even if <tt>counter[0]</tt> itself is incapable of generating interrupts, and readers don't need access to pending interrupt state.
+
+<pre>
+void maintain_counter() {
+  unsigned hi = counter[1];
+  unsigned lo = counter[0];
+  // Check that the counter hasn't gone more than 1/4th of the way around since we were last called.
+  static unsigned last = 0;  // nonzero once set
+  assert(last == 0 || ((lo | 1) - last) >> (W-2) == 0);
+  last = lo | 1;
+  // XOR LSB of counter[1] with MSB of counter[0].
+  unsigned diff = (hi & 1) ^ (lo >> (W-1));
+  // If they differ, incrementing counter[1] will make them match.
+  counter[1] += diff;
+}
+
+long read_counter() {
+  unsigned hi = counter[1];
+  unsigned lo = counter[0];
+  // If either bit is zero, we can simply shift and add to obtain the full counter.
+  // However, if both bits are one, we must subtract a correction.
+  unsigned surplus = (hi & 1) << (W-1) & lo;
+  return ((long) hi) << (W-1) + lo - surplus;
+}
+</pre>
+
+<p>Both routines are branch-free, no atomics are required, and any memory ordering is fine.
+
+<h2>Generalizing</h2>
+
+<p>This problem can also be solved with a reader-writer lock in which readers retry until a consistent generation number is seen, while a maintenance routine periodically updates a structure specifying how to translate the hardware counter.  Linux calls this a [seqlock]; FreeBSD has an analogous [timehands] mechanism.  This scheme shares the requirement above of running the maintenance routine significantly more often than the hardware counter overflows.
+
+<h2>References</h2>
+
+<ul>
+  <li>Leslie Lamport.  "<a href="https://lamport.azurewebsites.net/pubs/lamport-concurrent-clocks.pdf">Concurrent Reading and Writing of Clocks</a>."  1990.
+  <li>Shlomo Moran, Gadi Taubenfeld, Irit Yadin.  "<a href="https://www.sciencedirect.com/science/article/pii/S0022000096900495/pdf?md5=784cdf38648443f90fe3036f93c6d3b7&pid=1-s2.0-S0022000096900495-main.pdf">Concurrent Counting</a>."  1996.
+  <li><a href="https://en.wikipedia.org/wiki/Seqlock">seqlock</a> in Linux
+  <li> <a href="http://phk.freebsd.dk/pubs/timecounter.pdf">timehands</a> in FreeBSD
+</ul>
