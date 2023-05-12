@@ -75,7 +75,7 @@ long read_counter() {
 }
 </pre>
 
-<p>Another approach is to require some other source of wakeups which arrive more frequently than <tt>counter[0]</tt> overflows, and periodically duplicate the MSB of <tt>counter[0]</tt> into the LSB <tt>counter[1]</tt>.  This works even if <tt>counter[0]</tt> itself is incapable of generating interrupts, and readers don't need access to pending interrupt state.
+<p>Another approach is to require some other source of wakeups which arrive more frequently than <tt>counter[0]</tt> overflows, and overlap <tt>counter[0]</tt> and <tt>counter[1]</tt> by one bit, periodically duplicating the MSB of <tt>counter[0]</tt> into the LSB <tt>counter[1]</tt>.  This works even if <tt>counter[0]</tt> itself is incapable of generating interrupts, and readers don't need access to pending interrupt state.
 
 <pre>
 void maintain_counter() {
@@ -94,11 +94,11 @@ void maintain_counter() {
 long read_counter() {
   unsigned hi = counter[1];
   unsigned lo = counter[0];
-  // Imitate maintenance.
+  // Imitate maintenance update.
   unsigned diff = (hi & 1) ^ (lo >> (W-1));
   hi += diff;
-  // Combine words, ignoring MSB of counter[0].
-  return ((long)hi) << (W-1) | lo & ~(1 << (W-1));
+  // Combine words.  The one overlapping bit will match.
+  return ((long)hi) << (W-1) | lo;
 }
 </pre>
 

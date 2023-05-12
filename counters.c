@@ -25,11 +25,11 @@ void maintain_counter() {
 long read_counter() {
   unsigned hi = counter[1];
   unsigned lo = counter[0];
-  // Imitate maintenance.
+  // Imitate maintenance update.
   unsigned diff = (hi & 1) ^ (lo >> (W-1));
   hi += diff;
-  // Combine words, ignoring MSB of counter[0].
-  return ((long)hi) << (W-1) | lo & ~(1 << (W-1));
+  // Combine words.  The one overlapping bit will match.
+  return ((long)hi) << (W-1) | lo;
 }
 
 unsigned rdtsc() {
