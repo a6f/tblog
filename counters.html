@@ -15,18 +15,16 @@ pre, tt {
 <p>If the counter is maintained by hardware, e.g. a memory-mapped register, then a common trick is
 
 <pre>
-const int W = (8 * sizeof(unsigned));
+extern volatile uint32_t counter[2];
 
-extern volatile unsigned counter[2];
-
-long read_counter() {
-  unsigned hi, lo, hi2;
+int64_t read_counter() {
+  uint32_t hi, lo, hi2;
   do {
     hi = counter[1];
     lo = counter[0];
     hi2 = counter[1];
   } while (hi != hi2);
-  return ((long)hi) << W | lo;
+  return ((int64_t)hi) << 32 | lo;
 }
 </pre>
 
@@ -58,47 +56,48 @@ void handle_counter_interrupt() {
   counter[1]++;
 }
 
-unsigned read_counter_hi() {
-  unsigned hi = counter[1];
+uint32_t read_counter_hi() {
+  uint32_t hi = counter[1];
   bool pi = pending_interrupt[COUNTER];
   return (hi >> 1) + (pi || (hi & 1));
 }
 
-long read_counter() {
-  unsigned hi, lo, hi2;
+int64_t read_counter() {
+  uint32_t hi, lo, hi2;
   do {
     hi = read_counter_hi();
     lo = counter[0];
     hi2 = read_counter_hi();
   } while (hi != hi2);
-  return ((long)hi) << W | lo;
+  return ((int64_t)hi) << 32 | lo;
 }
 </pre>
 
 <p>Another approach is to require some other source of wakeups which arrive more frequently than <tt>counter[0]</tt> overflows, and overlap <tt>counter[0]</tt> and <tt>counter[1]</tt> by one bit, periodically duplicating the MSB of <tt>counter[0]</tt> into the LSB <tt>counter[1]</tt>.  This works even if <tt>counter[0]</tt> itself is incapable of generating interrupts, and readers don't need access to pending interrupt state.
 
 <pre>
+// Must be called periodically.
 void maintain_counter() {
-  unsigned hi = counter[1];
-  unsigned lo = counter[0];
+  uint32_t hi = counter[1];
+  uint32_t lo = counter[0];
   // Check that the counter hasn't gone more than 1/4th of the way around since we were last called.
-  static unsigned last = 0;  // nonzero once set
-  assert(last == 0 || ((lo | 1) - last) >> (W-2) == 0);
+  static uint32_t last = 0;  // nonzero once set
+  assert(last == 0 || ((lo | 1) - last) <= 1<<30);
   last = lo | 1;
   // XOR LSB of counter[1] with MSB of counter[0].
-  unsigned diff = (hi & 1) ^ (lo >> (W-1));
+  uint32_t diff = (hi & 1) ^ (lo >> 31);
   // If they differ, incrementing counter[1] will make them match.
   counter[1] += diff;
 }
 
-long read_counter() {
-  unsigned hi = counter[1];
-  unsigned lo = counter[0];
+int64_t read_counter() {
+  uint32_t hi = counter[1];
+  uint32_t lo = counter[0];
   // Imitate maintenance update.
-  unsigned diff = (hi & 1) ^ (lo >> (W-1));
+  uint32_t diff = (hi & 1) ^ (lo >> 31);
   hi += diff;
   // Combine words.  The one overlapping bit will match.
-  return ((long)hi) << (W-1) | lo;
+  return ((int64_t)hi) << 31 | lo;
 }
 </pre>
 
