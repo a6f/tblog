@@ -15,15 +15,16 @@ pre, tt {
 <p>If the counter is maintained by hardware, e.g. a memory-mapped register, then a common trick is
 
 <pre>
-#define W (8 * sizeof(unsigned))
+const int W = (8 * sizeof(unsigned));
 
 extern volatile unsigned counter[2];
 
 long read_counter() {
+  unsigned hi, lo, hi2;
   do {
-    unsigned hi = counter[1];
-    unsigned lo = counter[0];
-    unsigned hi2 = counter[1];
+    hi = counter[1];
+    lo = counter[0];
+    hi2 = counter[1];
   } while (hi != hi2);
   return ((long)hi) << W | lo;
 }
@@ -52,26 +53,23 @@ long read_counter() {
 
 <pre>
 void handle_counter_interrupt() {
-  counter[0]++;
+  counter[1]++;
   pending_interrupt[COUNTER] = false;
-  counter[0]++;
+  counter[1]++;
 }
 
 unsigned read_counter_hi() {
   unsigned hi = counter[1];
   bool pi = pending_interrupt[COUNTER];
-  if (pi || (hi & 1)) {
-    return (hi >> 1) + 1;
-  } else {
-    return hi >> 1;
-  }
+  return (hi >> 1) + (pi || (hi & 1));
 }
 
 long read_counter() {
+  unsigned hi, lo, hi2;
   do {
-    unsigned hi = read_counter_hi();
-    unsigned lo = counter[0];
-    unsigned hi2 = read_counter_hi();
+    hi = read_counter_hi();
+    lo = counter[0];
+    hi2 = read_counter_hi();
   } while (hi != hi2);
   return ((long)hi) << W | lo;
 }
@@ -96,10 +94,11 @@ void maintain_counter() {
 long read_counter() {
   unsigned hi = counter[1];
   unsigned lo = counter[0];
-  // If either bit is zero, we can simply shift and add to obtain the full counter.
-  // However, if both bits are one, we must subtract a correction.
-  unsigned surplus = (hi & 1) << (W-1) & lo;
-  return (((long)hi) << (W-1)) + lo - surplus;
+  // Imitate maintenance.
+  unsigned diff = (hi & 1) ^ (lo >> (W-1));
+  hi += diff;
+  // Combine words, ignoring MSB of counter[0].
+  return ((long)hi) << (W-1) | lo & ~(1 << (W-1));
 }
 </pre>
 
