@@ -101,11 +101,13 @@ int64_t read_counter() {
 }
 </pre>
 
-<p>Both routines are branch-free, no atomics are required, and any memory ordering is fine.
+<p>Both routines are branch-free, no atomics are required, and any memory ordering is fine.  This technique can be extended to more words.
 
-<h2>Generalizing</h2>
+<h2>Generalizations</h2>
 
-<p>This problem can also be solved with a reader-writer lock in which readers retry until a consistent generation number is seen, while a maintenance routine periodically updates a structure specifying how to translate the hardware counter.  Linux calls this a [seqlock]; FreeBSD has an analogous [timehands] mechanism.  This scheme shares the requirement above of running the maintenance routine significantly more often than the hardware counter overflows.
+<p>Given a regular source of wakeups more frequent than <tt>counter[0]</tt> overflows, we can also treat the expected counter range (before the next wakeup) as shared state guarded by a generic synchronization mechanism, such as RCU.  This is convenient when there is other shared state (such as calibration parameters) readers will need in order to interpret the counter.
+
+<p>Linux uses a reader-writer lock in which readers retry until a consistent generation number is seen, called a [seqlock].  FreeBSD has an analogous [timehands] mechanism.
 
 <h2>References</h2>
 
@@ -113,5 +115,5 @@ int64_t read_counter() {
   <li>Leslie Lamport.  "<a href="https://lamport.azurewebsites.net/pubs/lamport-concurrent-clocks.pdf">Concurrent Reading and Writing of Clocks</a>."  1990.
   <li>Shlomo Moran, Gadi Taubenfeld, Irit Yadin.  "<a href="https://www.sciencedirect.com/science/article/pii/S0022000096900495/pdf?md5=784cdf38648443f90fe3036f93c6d3b7&pid=1-s2.0-S0022000096900495-main.pdf">Concurrent Counting</a>."  1996.
   <li><a href="https://en.wikipedia.org/wiki/Seqlock">seqlock</a> in Linux
-  <li> <a href="http://phk.freebsd.dk/pubs/timecounter.pdf">timehands</a> in FreeBSD
+  <li><a href="http://phk.freebsd.dk/pubs/timecounter.pdf">timehands</a> in FreeBSD
 </ul>
